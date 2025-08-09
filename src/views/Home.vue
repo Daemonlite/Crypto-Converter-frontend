@@ -1,3 +1,122 @@
+<script setup>
+import { ref, onMounted, watch } from 'vue';
+import axios from 'axios';
+
+const baseUrl = import.meta.env.VITE_API_BASE_URL;
+
+// State
+const registeredCoins = ref([]);
+const conversionType = ref('fiatToCrypto');
+const inputAmount = ref(1);
+const outputAmount = ref('');
+const selectedFiatCurrency = ref('');
+const selectedCrypto = ref('');
+const selectedToCrypto = ref('');
+const conversionResult = ref('');
+const lastUpdated = ref('');
+const isLoading = ref(false);
+
+const fiatCurrencies = ['usd', 'eur', 'ghs', 'gbp', 'jpy', 'nzd', 'cad', 'aud', 'inr'];
+
+const fetchCoins = async () => {
+  try {
+    isLoading.value = true;
+    const response = await axios.get(`${baseUrl}/api/CoinData`);
+    registeredCoins.value = response.data.map(coin => ({ 
+      symbol: coin.symbol, 
+      name: coin.name 
+    }));
+  } catch (error) {
+    console.error('Error fetching coins:', error);
+  } finally {
+    isLoading.value = false;
+  }
+};
+
+const convertCryptoToCrypto = async () => {
+  try {
+    isLoading.value = true;
+    const response = await axios.post(`${baseUrl}/api/CoinData/convert-coin-to-coin`, {
+      amount: Number(inputAmount.value),
+      fromCryptoSymbol: selectedCrypto.value.toLowerCase(),
+      toCryptoSymbol: selectedToCrypto.value.toLowerCase()
+    });
+    
+    return {
+      convertedAmount: parseFloat(response.data.convertedAmount).toFixed(8),
+      lastUpdated: response.data.lastUpdated
+    };
+  } catch (error) {
+    console.error('Error converting crypto to crypto:', error);
+    return null;
+  } finally {
+    isLoading.value = false;
+  }
+};
+
+const convertFiatToCrypto = async () => {
+  try {
+    isLoading.value = true;
+    const response = await axios.post(`${baseUrl}/api/CoinData/convert-coin-to-fiat`, {
+      amount: Number(inputAmount.value),
+      cryptoSymbol: selectedCrypto.value.toLowerCase(),
+      toCurrency: selectedFiatCurrency.value.toLowerCase()
+    });
+    
+    return {
+      convertedAmount: parseFloat(response.data.convertedAmount).toFixed(8),
+      outputAmount: response.data.convertedAmount,
+      lastUpdated: response.data.lastUpdated
+    };
+  } catch (error) {
+    console.error('Error converting fiat to crypto:', error);
+    return null;
+  } finally {
+    isLoading.value = false;
+  }
+};
+
+const convert = async () => {
+  if (isNaN(inputAmount.value) || inputAmount.value <= 0) {
+    outputAmount.value = '';
+    conversionResult.value = '';
+    return;
+  }
+
+  let result;
+  if (conversionType.value === 'fiatToCrypto') {
+    if (!selectedFiatCurrency.value || !selectedToCrypto.value) {
+      outputAmount.value = '';
+      conversionResult.value = '';
+      return;
+    }
+    result = await convertFiatToCrypto();
+  } else if (conversionType.value === 'cryptoToCrypto') {
+    if (!selectedCrypto.value || !selectedToCrypto.value) {
+      outputAmount.value = '';
+      conversionResult.value = '';
+      return;
+    }
+    result = await convertCryptoToCrypto();
+  }
+
+  if (result) {
+    outputAmount.value = result.convertedAmount;
+    conversionResult.value = outputAmount.value;
+    lastUpdated.value = result.lastUpdated;
+  }
+};
+
+// Watchers
+watch([inputAmount, selectedCrypto, selectedToCrypto, selectedFiatCurrency, conversionType], () => {
+  convert();
+});
+
+// Initialize
+onMounted(async () => {
+  await fetchCoins();
+});
+</script>
 <template>
   <div class="min-h-screen flex flex-col items-center justify-start bg-white text-gray-900 pt-16">
     <nav class="fixed top-0 left-0 w-full bg-white shadow-md z-10">
@@ -22,12 +141,6 @@
       <div class="text-center mb-12">
         <h1 class="text-4xl font-normal tracking-wide">Cryptocurrency Converter & Calculator</h1>
         <p class="text-gray-500 mt-2">
-          <span v-if="conversionType === 'cryptoToFiat'">
-            BTC to GHS: 1 Bitcoin converts to GHS {{ conversionResult }} as of {{ lastUpdated }}
-          </span>
-          <span v-if="conversionType === 'fiatToCrypto'">
-            USD to BTC: 1 USD converts to BTC {{ conversionResult }} as of {{ lastUpdated }}
-          </span>
           <span v-if="conversionType === 'cryptoToCrypto'">
             BTC to ETH: 1 Bitcoin converts to ETH {{ conversionResult }} as of {{ lastUpdated }}
           </span>
@@ -47,7 +160,7 @@
               v-model="selectedFiatCurrency"
               class="h-full bg-transparent text-gray-500 rounded-md focus:outline-none text-lg"
             >
-              <option v-for="currency in fiatCurrencies" :key="currency" :value="currency">
+              <option v-for="currency in fiatCurrencies" :key="currency" :value="currency" >
                 {{ currency.toUpperCase() }}
               </option>
             </select>
@@ -122,90 +235,3 @@
   </div>
 </template>
 
-<script setup>
-import { ref, onMounted, watch } from 'vue';
-
-// State
-const conversionType = ref('fiatToCrypto');
-const inputAmount = ref(1);
-const outputAmount = ref('');
-const selectedFiatCurrency = ref('usd');
-const selectedCrypto = ref('btc');
-const selectedToCrypto = ref('eth');
-const conversionResult = ref('');
-const lastUpdated = ref('');
-const isLoading = ref(false);
-
-// Mock data
-const registeredCoins = ref([
-  { symbol: 'btc', name: 'Bitcoin' },
-  { symbol: 'eth', name: 'Ethereum' },
-  { symbol: 'sol', name: 'Solana' },
-  { symbol: 'ada', name: 'Cardano' },
-]);
-
-const fiatCurrencies = ['usd', 'eur', 'ghs', 'gbp', 'jpy'];
-
-// Mock exchange rates
-const exchangeRates = ref({});
-
-// Mock API functions
-async function fetchRates() {
-  isLoading.value = true;
-  await new Promise(resolve => setTimeout(resolve, 800));
-  
-  exchangeRates.value = {
-    btc: { usd: 50000, eur: 45000, ghs: 1234964.91, gbp: 40000, jpy: 7000000 },
-    eth: { usd: 3000, eur: 2700, ghs: 36000, gbp: 2400, jpy: 420000 },
-    sol: { usd: 100, eur: 90, ghs: 1200, gbp: 80, jpy: 14000 },
-    ada: { usd: 1.5, eur: 1.35, ghs: 18, gbp: 1.2, jpy: 210 },
-  };
-  
-  lastUpdated.value = new Date().toLocaleString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    hour: 'numeric',
-  });
-  isLoading.value = false;
-}
-
-// Conversion function
-function convert() {
-  if (conversionType.value === 'fiatToCrypto') {
-    if (!inputAmount.value || !selectedFiatCurrency.value || !selectedToCrypto.value) {
-      outputAmount.value = '';
-      return;
-    }
-    const rate = exchangeRates.value[selectedToCrypto.value]?.[selectedFiatCurrency.value] || 0;
-    const result = parseFloat(inputAmount.value) / rate;
-    outputAmount.value = result.toFixed(8);
-    conversionResult.value = outputAmount.value;
-  } else if (conversionType.value === 'cryptoToCrypto') {
-    if (!inputAmount.value || !selectedCrypto.value || !selectedToCrypto.value) {
-      outputAmount.value = '';
-      return;
-    }
-    const fromRate = exchangeRates.value[selectedCrypto.value]?.usd || 1;
-    const toRate = exchangeRates.value[selectedToCrypto.value]?.usd || 1;
-    const result = (parseFloat(inputAmount.value) * fromRate) / toRate;
-    outputAmount.value = result.toFixed(8);
-    conversionResult.value = outputAmount.value;
-  }
-}
-
-// Watchers for immediate conversion on change
-watch([inputAmount, selectedCrypto, selectedToCrypto, selectedFiatCurrency, conversionType], () => {
-  convert();
-});
-
-// Initialize on component mount
-onMounted(() => {
-  fetchRates().then(() => {
-    convert();
-  });
-});
-</script>
-
-<style>
-/* No custom styles needed beyond Tailwind for this layout */
-</style>
